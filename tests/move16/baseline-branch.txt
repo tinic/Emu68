@@ -1,0 +1,37 @@
+    /* MOVE16 (Ax)+, (Ay)+ */
+    else if ((opcode & 0xfff8) == 0xf620) // && (opcode2 & 0x8fff) == 0x8000) <- don't test! Real m68k ignores that bit!
+    {
+        uint8_t buf1 = RA_AllocARMRegister(ctx);
+        uint8_t buf2 = RA_AllocARMRegister(ctx);
+        uint8_t src = RA_MapM68kRegister(ctx, 8 + (opcode & 7));
+        uint8_t dst = RA_MapM68kRegister(ctx, 8 + ((opcode2 >> 12) & 7));
+
+        uint8_t aligned_src = RA_AllocARMRegister(ctx);
+        uint8_t aligned_dst = RA_AllocARMRegister(ctx);
+
+        EMIT(ctx, 
+            bic_immed(aligned_src, src, 4, 0),
+            bic_immed(aligned_dst, dst, 4, 0),
+            ldp64(aligned_src, buf1, buf2, 0),
+            add_immed(src, src, 16),
+            stp64(aligned_dst, buf1, buf2, 0)
+        );
+
+        // Update dst only if it is not the same as src!
+        if (dst != src) {
+            EMIT(ctx, add_immed(dst, dst, 16));
+        }
+
+        RA_FreeARMRegister(ctx, aligned_src);
+        RA_FreeARMRegister(ctx, aligned_dst);
+
+        RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+        RA_SetDirtyM68kRegister(ctx, 8 + ((opcode2 >> 12) & 7));
+
+        RA_FreeARMRegister(ctx, buf1);
+        RA_FreeARMRegister(ctx, buf2);
+
+        ctx->tc_M68kCodePtr += 2;
+        insn_consumed = 1;
+        EMIT_AdvancePC(ctx, 4);
+    }

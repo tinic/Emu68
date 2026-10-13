@@ -5248,41 +5248,68 @@ uint32_t EMIT_lineF(struct TranslatorContext *ctx)
         EMIT_AdvancePC(ctx, 2);
     }
     /* MOVE16 (Ax)+, (Ay)+ */
-    else if ((opcode & 0xfff8) == 0xf620) // && (opcode2 & 0x8fff) == 0x8000) <- don't test! Real m68k ignores that bit!
+    else if ((opcode & 0xfff8) == 0xf620) // reserved extension bits ignored
     {
         uint8_t buf1 = RA_AllocARMRegister(ctx);
         uint8_t buf2 = RA_AllocARMRegister(ctx);
         uint8_t src = RA_MapM68kRegister(ctx, 8 + (opcode & 7));
         uint8_t dst = RA_MapM68kRegister(ctx, 8 + ((opcode2 >> 12) & 7));
-
         uint8_t aligned_src = RA_AllocARMRegister(ctx);
         uint8_t aligned_dst = RA_AllocARMRegister(ctx);
+        unsigned run = 1;
 
-        EMIT(ctx, 
-            bic_immed(aligned_src, src, 4, 0),
-            bic_immed(aligned_dst, dst, 4, 0),
-            ldp64(aligned_src, buf1, buf2, 0),
-            add_immed(src, src, 16),
-            stp64(aligned_dst, buf1, buf2, 0)
-        );
-
-        // Update dst only if it is not the same as src!
-        if (dst != src) {
-            EMIT(ctx, add_immed(dst, dst, 16));
+        /* Bound paired-access offsets, PC advance and translation lookahead.
+           A shared Ax/Ay must retain the original one-increment path. */
+        if (src != dst) {
+            while (run < 31 && run < ctx->tc_M68kInsnRemaining) {
+                uint16_t *next = ctx->tc_M68kCodePtr + 2 * run;
+                if (((uintptr_t)(next + 1) ^
+                     (uintptr_t)ctx->tc_M68kCodePtr) & ~(uintptr_t)4095)
+                    break;
+                if (cache_read_16(ICACHE, (uintptr_t)next) != opcode ||
+                    ((cache_read_16(ICACHE, (uintptr_t)(next + 1)) ^
+                      opcode2) & 0x7000))
+                    break;
+                ++run;
+            }
         }
 
+        EMIT(ctx,
+            bic_immed(aligned_src, src, 4, 0),
+            bic_immed(aligned_dst, dst, 4, 0)
+        );
+        if (run == 1) {
+            EMIT(ctx,
+                ldp64(aligned_src, buf1, buf2, 0),
+                add_immed(src, src, 16),
+                stp64(aligned_dst, buf1, buf2, 0)
+            );
+            if (dst != src)
+                EMIT(ctx, add_immed(dst, dst, 16));
+        } else {
+            /* The MMU mirrors 4..8 GB onto 0..4 GB; bus faults also fold
+               that alias. Keep each load/store pair in its original order,
+               then commit the guest pointers with wrapping 32-bit adds. */
+            for (unsigned i = 0; i < run; ++i) {
+                EMIT(ctx,
+                    ldp64(aligned_src, buf1, buf2, 16 * i),
+                    stp64(aligned_dst, buf1, buf2, 16 * i)
+                );
+            }
+            EMIT(ctx,
+                add_immed(src, src, 16 * run),
+                add_immed(dst, dst, 16 * run)
+            );
+        }
         RA_FreeARMRegister(ctx, aligned_src);
         RA_FreeARMRegister(ctx, aligned_dst);
-
         RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
         RA_SetDirtyM68kRegister(ctx, 8 + ((opcode2 >> 12) & 7));
-
         RA_FreeARMRegister(ctx, buf1);
         RA_FreeARMRegister(ctx, buf2);
-
-        ctx->tc_M68kCodePtr += 2;
-        insn_consumed = 1;
-        EMIT_AdvancePC(ctx, 4);
+        ctx->tc_M68kCodePtr += 2 * run;
+        insn_consumed = run;
+        EMIT_AdvancePC(ctx, 4 * run);
     }
     /* MOVE16 other variations */
     else if ((opcode & 0xffe0) == 0xf600)

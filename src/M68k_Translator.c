@@ -418,7 +418,13 @@ static inline uintptr_t M68K_Translate(uint16_t *M68kCodePtr, uint32_t *arm_star
         local_state[insn_count].mls_M68kPtr = ctx.tc_M68kCodePtr;
         local_state[insn_count].mls_PCRel = _pc_rel;
 
+        ctx.tc_M68kInsnRemaining = var_EMU68_M68K_INSN_DEPTH - insn_count;
         insn_consumed = EmitINSN(&ctx);
+
+        /* A merged run has no independent entry points for skipped opcodes. */
+        for (unsigned i = 1; i < insn_consumed; ++i) {
+            local_state[insn_count + i].mls_M68kPtr = NULL;
+        }
 
         if (ctx.tc_M68kCodePtr < m68k_low)
             m68k_low = ctx.tc_M68kCodePtr;

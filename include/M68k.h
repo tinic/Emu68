@@ -102,6 +102,8 @@ struct TranslatorContext {
         uint16_t *  tc_M68kCodePtr;
         uint32_t *  tc_PPCCodePtr;
     };
+    /* Remaining instruction budget for m68k emitter lookahead. */
+    uint16_t        tc_M68kInsnRemaining;
 };
 
 struct M68KState
