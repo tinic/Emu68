@@ -67,3 +67,7 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
+
+# Python host regression helpers
+__pycache__/
+*.pyc
